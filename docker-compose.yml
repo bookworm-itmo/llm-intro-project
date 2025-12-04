@@ -1,0 +1,23 @@
+services:
+  frontend:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+
+  data-init:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
+    command: python prepare_data.py
+    profiles:
+      - init
