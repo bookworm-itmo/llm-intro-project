@@ -34,7 +34,8 @@ def calculate_metrics(
 def evaluate_rag():
     print("Загрузка RAG системы...")
     rag = RAGEngine()
-    rag.load_chunks("data/chunks.json")
+    rag.load_chunks("data/chunks.parquet")
+    rag.load_embeddings("data/embeddings.parquet")
     rag.load_index("data/faiss_index/index.faiss")
 
     print("Загрузка валидационной выборки...")

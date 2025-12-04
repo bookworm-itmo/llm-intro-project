@@ -1,6 +1,6 @@
 import os
-import json
 import numpy as np
+import pandas as pd
 import faiss
 from pathlib import Path
 from typing import List, Dict, Tuple
@@ -19,70 +19,126 @@ class RAGEngine:
             verify_ssl_certs=False
         )
         self.index = None
-        self.chunks = []
-        self.dimension = 1024  # GigaChat embeddings dimension
+        self.chunks_df = None
+        self.embeddings_df = None
+        self.dimension = 1024
 
-    def load_chunks(self, chunks_path: str):
-        with open(chunks_path, 'r', encoding='utf-8') as f:
-            self.chunks = json.load(f)
+    # ==================== Build Pipeline ====================
 
-    def _truncate_text(self, text: str, max_chars: int = 1000) -> str:
-        """Обрезаем текст до максимального количества символов"""
-        if len(text) <= max_chars:
-            return text
-        return text[:max_chars]
+    def build_chunks(self, chunks: List[Dict], chunks_path: str) -> pd.DataFrame:
+        """Сохраняет чанки в parquet."""
+        df = pd.DataFrame(chunks)
+        df['chunk_id'] = df['id'].astype('int64')
+        df = df[['chunk_id', 'chapter', 'text']]
 
-    def create_embeddings(self, texts: List[str]) -> np.ndarray:
-        # Обрезаем длинные тексты для соблюдения лимита токенов GigaChat
-        truncated_texts = [self._truncate_text(t) for t in texts]
+        Path(chunks_path).parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(chunks_path, index=False)
+        self.chunks_df = df
+        return df
 
-        # Обрабатываем батчами по 50 текстов
+    def build_embeddings(self, embeddings_path: str) -> pd.DataFrame:
+        """Создаёт эмбеддинги и сохраняет в parquet."""
+        if self.chunks_df is None:
+            raise ValueError("Сначала загрузите чанки")
+
+        texts = self.chunks_df['text'].tolist()
+        print(f"Создание эмбеддингов для {len(texts)} чанков...")
+
+        # Создаём эмбеддинги батчами
         all_embeddings = []
         batch_size = 50
-        total_batches = (len(truncated_texts) + batch_size - 1) // batch_size
-        for i in tqdm(range(0, len(truncated_texts), batch_size), total=total_batches, desc="Создание эмбеддингов"):
-            batch = truncated_texts[i:i + batch_size]
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+
+        for i in tqdm(range(0, len(texts), batch_size), total=total_batches, desc="Создание эмбеддингов"):
+            batch = texts[i:i + batch_size]
             batch_embeddings = self.embeddings_client.embed_documents(batch)
             all_embeddings.extend(batch_embeddings)
 
-        return np.array(all_embeddings, dtype='float32')
+        embeddings = np.array(all_embeddings, dtype='float32')
 
-    def build_index(self):
-        texts = [chunk['text'] for chunk in self.chunks]
-        print(f"Создание эмбеддингов для {len(texts)} чанков...")
-        embeddings = self.create_embeddings(texts)
+        # Нормализуем для косинусного сходства
+        faiss.normalize_L2(embeddings)
 
         self.dimension = embeddings.shape[1]
-        self.index = faiss.IndexFlatL2(self.dimension)
-        self.index.add(embeddings)
-        print(f"Индекс создан. Размерность: {self.dimension}")
+        print(f"Размерность эмбеддингов: {self.dimension}")
 
-    def save_index(self, index_path: str):
+        # Сохраняем в parquet
+        emb_df = pd.DataFrame({
+            'chunk_id': self.chunks_df['chunk_id'].astype('int64'),
+            'embedding': list(embeddings)
+        })
+
+        Path(embeddings_path).parent.mkdir(parents=True, exist_ok=True)
+        emb_df.to_parquet(embeddings_path, index=False)
+        self.embeddings_df = emb_df
+        return emb_df
+
+    def build_faiss_index(self, index_path: str):
+        """Строит FAISS IndexFlatIP и сохраняет."""
+        if self.embeddings_df is None:
+            raise ValueError("Сначала создайте эмбеддинги")
+
+        embeddings = np.stack(self.embeddings_df['embedding'].to_numpy(), axis=0).astype('float32')
+
+        # IndexFlatIP для косинусного сходства (эмбеддинги уже нормализованы)
+        self.index = faiss.IndexFlatIP(self.dimension)
+        self.index.add(embeddings)
+
         Path(index_path).parent.mkdir(parents=True, exist_ok=True)
         faiss.write_index(self.index, index_path)
+        print(f"Индекс сохранён: {len(embeddings)} векторов")
+
+    # ==================== Load ====================
+
+    def load_chunks(self, chunks_path: str):
+        """Загружает чанки из parquet."""
+        self.chunks_df = pd.read_parquet(chunks_path)
+
+    def load_embeddings(self, embeddings_path: str):
+        """Загружает эмбеддинги из parquet."""
+        self.embeddings_df = pd.read_parquet(embeddings_path)
 
     def load_index(self, index_path: str):
+        """Загружает FAISS индекс."""
         self.index = faiss.read_index(index_path)
 
-    def search(self, query: str, top_k: int = 3) -> List[Dict]:
-        query_embedding = self.embeddings_client.embed_query(query)
-        query_embedding = np.array([query_embedding], dtype='float32')
-        distances, indices = self.index.search(query_embedding, top_k)
+    # ==================== Search ====================
 
+    def search(self, query: str, top_k: int = 5) -> List[Dict]:
+        """Поиск релевантных чанков по запросу."""
+        # Получаем эмбеддинг запроса
+        query_embedding = np.array(
+            self.embeddings_client.embed_query(query),
+            dtype='float32'
+        ).reshape(1, -1)
+
+        # Нормализуем для косинусного сходства
+        faiss.normalize_L2(query_embedding)
+
+        # Поиск (IndexFlatIP возвращает similarity, чем больше - тем лучше)
+        similarities, indices = self.index.search(query_embedding, top_k)
+
+        # Получаем chunk_id по индексу, затем тексты
         results = []
-        for idx, distance in zip(indices[0], distances[0]):
-            if idx < len(self.chunks):
-                chunk = self.chunks[idx].copy()
-                chunk['score'] = float(distance)
-                results.append(chunk)
+        for idx, similarity in zip(indices[0], similarities[0]):
+            if 0 <= idx < len(self.embeddings_df):
+                chunk_id = self.embeddings_df.iloc[idx]['chunk_id']
+                chunk_row = self.chunks_df[self.chunks_df['chunk_id'] == chunk_id].iloc[0]
+                results.append({
+                    'chunk_id': int(chunk_id),
+                    'chapter': int(chunk_row['chapter']),
+                    'text': chunk_row['text'],
+                    'score': float(similarity)
+                })
 
         return results
 
-    def get_context_for_llm(self, query: str, top_k: int = 3) -> Tuple[str, List[Dict]]:
+    def get_context_for_llm(self, query: str, top_k: int = 5) -> Tuple[str, List[Dict]]:
+        """Получает контекст для LLM."""
         results = self.search(query, top_k)
 
         context_parts = []
-        for i, result in enumerate(results, 1):
+        for result in results:
             context_parts.append(
                 f"[Глава {result['chapter']}]\n{result['text']}"
             )

@@ -2,7 +2,9 @@ anthropic>=0.40.0
 faiss-cpu==1.8.0
 streamlit==1.40.1
 numpy==1.26.4
-requests==2.32.3
+pandas
+pyarrow
 python-dotenv==1.0.1
 langchain-gigachat
+langchain-text-splitters
 tqdm

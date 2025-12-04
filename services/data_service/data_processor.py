@@ -3,6 +3,7 @@ import json
 import xml.etree.ElementTree as ET
 from typing import List, Dict
 from pathlib import Path
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class BookProcessor:
@@ -59,6 +60,13 @@ class BookProcessor:
         return chapters
 
     def create_chunks(self, chunk_size: int = 500, overlap: int = 50) -> List[Dict]:
+        """Разбивает текст на чанки с помощью RecursiveCharacterTextSplitter."""
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=overlap,
+            separators=["\n\n", "\n", ".", "!", "?", " "],
+        )
+
         chunks = []
         chunk_id = 0
 
@@ -66,16 +74,11 @@ class BookProcessor:
             text = chapter['text']
             chapter_num = chapter['chapter_number']
 
-            sentences = re.split(r'(?<=[.!?])\s+', text)
+            chapter_chunks = splitter.split_text(text)
 
-            current_chunk = []
-            current_length = 0
-
-            for sentence in sentences:
-                sentence_length = len(sentence)
-
-                if current_length + sentence_length > chunk_size and current_chunk:
-                    chunk_text = ' '.join(current_chunk)
+            for chunk_text in chapter_chunks:
+                chunk_text = chunk_text.strip()
+                if len(chunk_text) >= 50:  # минимальная длина чанка
                     chunks.append({
                         'id': chunk_id,
                         'text': chunk_text,
@@ -83,23 +86,6 @@ class BookProcessor:
                         'length': len(chunk_text)
                     })
                     chunk_id += 1
-
-                    overlap_size = min(overlap, len(current_chunk))
-                    current_chunk = current_chunk[-overlap_size:] if overlap_size > 0 else []
-                    current_length = sum(len(s) for s in current_chunk)
-
-                current_chunk.append(sentence)
-                current_length += sentence_length
-
-            if current_chunk:
-                chunk_text = ' '.join(current_chunk)
-                chunks.append({
-                    'id': chunk_id,
-                    'text': chunk_text,
-                    'chapter': chapter_num,
-                    'length': len(chunk_text)
-                })
-                chunk_id += 1
 
         self.chunks = chunks
         return chunks

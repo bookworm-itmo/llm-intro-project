@@ -11,7 +11,8 @@ from services.llm_service.claude_client import ClaudeClient
 @st.cache_resource
 def load_rag_engine():
     rag = RAGEngine()
-    rag.load_chunks("data/chunks.json")
+    rag.load_chunks("data/chunks.parquet")
+    rag.load_embeddings("data/embeddings.parquet")
     rag.load_index("data/faiss_index/index.faiss")
     return rag
 

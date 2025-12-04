@@ -12,3 +12,6 @@ env/
 .vscode/
 *.swp
 *.swo
+
+# Old data format (deprecated)
+data/chunks.json
