@@ -24,6 +24,8 @@
 data/
 ├── master_and_margarita.fb2   # Исходная книга
 ├── chunks.parquet             # Чанки с метаданными
+├── chunks_sample.json         # Сэмпл чанков (JSON)
+├── chunks_sample.txt          # Сэмпл чанков (текст)
 ├── embeddings.parquet         # Векторные представления
 └── faiss_index/
     └── index.faiss            # Векторный индекс
@@ -71,7 +73,7 @@ data/
 
 ```bash
 pip install -r requirements.txt
-python prepare_data.py
+python main.py
 streamlit run frontend/app.py
 ```
 
@@ -92,11 +94,11 @@ GIGACHAT_AUTH_KEY=...
 .
 ├── data/                       # Данные
 ├── services/
-│   ├── data_service/           # Парсинг и chunking
+│   ├── data_service/           # Парсинг, chunking и подготовка данных
 │   ├── rag_service/            # Эмбеддинги и FAISS
 │   └── llm_service/            # Claude API
 ├── frontend/                   # Streamlit UI
 ├── validation/                 # Оценка качества RAG
-├── prepare_data.py             # Скрипт подготовки
+├── main.py                     # Главный скрипт подготовки данных
 └── requirements.txt
 ```
