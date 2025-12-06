@@ -1,0 +1,110 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[russian]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+
+\geometry{margin=2cm}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+
+\begin{document}
+
+\begin{center}
+\Large\textbf{Чекпоинт 1: Сбор и подготовка данных}\\[0.3em]
+\large RAG Чат-бот по роману «Мастер и Маргарита»\\[1em]
+\normalsize\textbf{Команда bookworm}\\[0.3em]
+Горбунов Дмитрий Павлович\\
+Ковалева Дарина Евгеньевна\\
+Тельнов Федор Николаевич\\
+Мацаков Борис Вячеславович
+\end{center}
+
+\vspace{0.5em}
+\textbf{Репозиторий:} \url{https://github.com/bookworm-itmo/llm-intro-project}
+
+\section*{Источник данных}
+
+Роман М.А. Булгакова «Мастер и Маргарита» в формате FB2, скачан из электронной библиотеки \href{https://flibusta.is/b/813954}{Флибуста}. Книга подходит для RAG: большой объём текста, много персонажей и событий.
+
+\section*{Сбор данных}
+
+Разработан парсер FB2, который:
+\begin{itemize}
+    \item Извлекает текст из XML-структуры файла
+    \item Разбивает на главы по паттерну «Глава N»
+    \item Сохраняет текст с привязкой к номерам глав
+\end{itemize}
+
+Исходный файл: \href{https://github.com/bookworm-itmo/llm-intro-project/blob/main/data/master_and_margarita.fb2}{\texttt{data/master\_and\_margarita.fb2}}
+
+\section*{Подготовка для RAG}
+
+\textbf{Chunking} — разбиение текста на фрагменты с помощью \texttt{RecursiveCharacterTextSplitter}:
+\begin{itemize}
+    \item Размер чанка: 800 символов, перекрытие: 100 символов
+    \item Каждому чанку присвоен номер главы
+    \item Результат: \textbf{1182 чанка} из 32 глав
+\end{itemize}
+
+\textbf{Эмбеддинги} — векторизация через GigaChat Embeddings (Сбер):
+\begin{itemize}
+    \item Размерность: 1024, нормализация L2
+\end{itemize}
+
+\textbf{Индексация} — FAISS IndexFlatIP для косинусного поиска.
+
+\section*{Структура данных}
+
+Все данные в папке \href{https://github.com/bookworm-itmo/llm-intro-project/tree/main/data}{\texttt{data/}}:
+
+\begin{verbatim}
+data/
+├── master_and_margarita.fb2   # Исходная книга
+├── chunks.parquet             # Чанки (chunk_id, chapter, text)
+├── embeddings.parquet         # Векторы (chunk_id, embedding[1024])
+├── chunks_sample.json         # Сэмпл данных
+└── faiss_index/index.faiss    # Векторный индекс
+\end{verbatim}
+
+\section*{Объём данных}
+
+\begin{tabular}{ll}
+Исходный текст: & $\sim$580 000 символов \\
+Глав: & 32 + эпилог \\
+Чанков: & 1 182 \\
+Средний размер чанка: & $\sim$705 символов \\
+\end{tabular}
+
+\section*{Сэмпл данных}
+
+Доступен по ссылке: \href{https://github.com/bookworm-itmo/llm-intro-project/blob/main/data/chunks_sample.json}{\texttt{data/chunks\_sample.json}}
+
+Пример чанка (глава 1):
+\begin{quote}
+\small
+«Никогда не разговаривайте с неизвестными. В час жаркого весеннего заката на Патриарших прудах появилось двое граждан. Первый из них — приблизительно сорокалетний, одетый в серенькую летнюю пару, — был маленького роста, темноволос, упитан, лыс...»
+\end{quote}
+
+\section*{Архитектура}
+
+Система состоит из трёх сервисов:
+\begin{itemize}
+    \item \textbf{Data Service} — парсинг FB2, chunking, подготовка данных
+    \item \textbf{RAG Service} — поиск релевантных фрагментов через FAISS
+    \item \textbf{LLM Service} — генерация ответов через Claude API
+\end{itemize}
+
+Пользователь взаимодействует с системой через веб-интерфейс (Streamlit).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{solution_architecture.png}
+\caption{Архитектура RAG чат-бота}
+\end{figure}
+
+\end{document}
