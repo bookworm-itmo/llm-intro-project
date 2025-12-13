@@ -1,0 +1,106 @@
+@startuml sequence_data_preparation
+!theme plain
+
+title Sequence: Подготовка данных (Offline Pipeline)
+
+actor Developer as dev
+participant "main.py" as main
+participant "DataPreparator" as prep
+participant "BookProcessor" as processor
+participant "RAGEngine" as rag
+database "FB2 File" as fb2
+participant "GigaChat API" as gigachat
+database "chunks.parquet" as chunks
+database "embeddings.parquet" as embeddings
+database "FAISS Index" as faiss
+
+dev -> main: python main.py
+activate main
+
+main -> prep: DataPreparator(chunk_size=800, overlap=100)
+activate prep
+
+prep -> prep: prepare_all()
+
+== Этап 1: Парсинг и Chunking ==
+
+prep -> processor: BookProcessor(book_path)
+activate processor
+
+processor -> fb2: load_book()
+fb2 --> processor: raw XML
+
+processor -> processor: _load_fb2()\nXML parsing
+
+processor -> processor: split_into_chapters()\nregex: "Глава \\d+"
+
+note right of processor
+    32 главы
+    ~580K символов
+end note
+
+processor -> processor: create_chunks()\nRecursiveCharacterTextSplitter
+
+note right of processor
+    separators:
+    ["\\n\\n", "\\n", ".", "!", "?", " "]
+    min_length: 50
+end note
+
+processor --> prep: List[Dict] (1182 chunks)
+deactivate processor
+
+== Этап 2: Сохранение чанков ==
+
+prep -> rag: RAGEngine()
+activate rag
+
+prep -> rag: build_chunks(chunks, path)
+rag -> chunks: DataFrame.to_parquet()
+chunks --> rag: OK
+
+== Этап 3: Создание эмбеддингов ==
+
+prep -> rag: build_embeddings(path)
+
+loop Для каждого batch (50 текстов)
+    rag -> gigachat: embed_documents(batch)
+    gigachat --> rag: List[embedding[1024]]
+end
+
+rag -> rag: faiss.normalize_L2(embeddings)
+
+rag -> embeddings: DataFrame.to_parquet()
+embeddings --> rag: OK
+
+== Этап 4: Построение FAISS индекса ==
+
+prep -> rag: build_faiss_index(path)
+
+rag -> rag: IndexFlatIP(dimension=1024)
+rag -> rag: index.add(embeddings)
+
+rag -> faiss: faiss.write_index()
+faiss --> rag: OK
+
+deactivate rag
+
+== Этап 5: Создание сэмплов ==
+
+prep -> prep: _create_chunks_sample()
+
+note right of prep
+    chunks_sample.json
+    chunks_sample.txt
+end note
+
+== Верификация ==
+
+prep -> prep: verify_data_storage()
+prep --> main: True (success)
+deactivate prep
+
+main --> dev: "Готово"
+deactivate main
+
+@enduml

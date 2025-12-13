@@ -1,0 +1,56 @@
+@startuml architecture
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Архитектура RAG Чат-бота "Мастер и Маргарита"
+
+Person(user, "Пользователь", "Задает вопросы о романе")
+
+System_Boundary(rag_system, "RAG Система") {
+
+    Container(frontend, "Frontend", "Streamlit", "Веб-интерфейс чат-бота\napp.py")
+
+    Container(llm_service, "LLM Service", "Python, Anthropic SDK", "Генерация ответов\nClaudeClient")
+
+    Container(rag_service, "RAG Service", "Python, FAISS, LangChain", "Поиск релевантных фрагментов\nRAGEngine")
+
+    Container(data_service, "Data Service", "Python, LangChain", "Парсинг FB2, chunking\nBookProcessor, DataPreparator")
+
+    ContainerDb(faiss_index, "FAISS Index", "IndexFlatIP", "Векторный индекс\n1182 векторов, 1024 dim")
+
+    ContainerDb(chunks_db, "Chunks Storage", "Parquet", "Текстовые фрагменты\nchunk_id, chapter, text")
+
+    ContainerDb(embeddings_db, "Embeddings Storage", "Parquet", "Векторные представления\nchunk_id, embedding[1024]")
+
+    ContainerDb(source_book, "Исходная книга", "FB2", "Мастер и Маргарита\n32 главы, ~580K символов")
+}
+
+System_Ext(claude_api, "Claude API", "Anthropic\nClaude Haiku 4.5\nГенерация ответов")
+System_Ext(gigachat_api, "GigaChat API", "Сбер\nGigaChatEmbeddings\nСоздание эмбеддингов")
+
+' User interactions
+Rel(user, frontend, "Вопрос", "HTTP")
+Rel(frontend, user, "Ответ + источники", "HTTP")
+
+' Frontend to services
+Rel(frontend, rag_service, "get_context_for_llm(query, top_k)", "Python")
+Rel(frontend, llm_service, "generate_answer(query, context, sources)", "Python")
+
+' RAG Service flow
+Rel(rag_service, faiss_index, "search(query_vector, k)", "FAISS")
+Rel(rag_service, chunks_db, "Получение текста по chunk_id", "Pandas")
+Rel(rag_service, embeddings_db, "Загрузка векторов", "Pandas")
+Rel(rag_service, gigachat_api, "embed_query(text)", "HTTPS")
+
+' LLM Service
+Rel(llm_service, claude_api, "messages.create(prompt)", "HTTPS")
+
+' Data preparation (offline)
+Rel(data_service, source_book, "load_book(), split_into_chapters()", "XML Parse")
+Rel(data_service, chunks_db, "build_chunks()", "Parquet Write")
+Rel(data_service, gigachat_api, "embed_documents(texts)", "HTTPS")
+Rel(data_service, embeddings_db, "build_embeddings()", "Parquet Write")
+Rel(data_service, faiss_index, "build_faiss_index()", "FAISS Write")
+
+@enduml

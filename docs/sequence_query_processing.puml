@@ -1,0 +1,110 @@
+@startuml sequence_query_processing
+!theme plain
+
+title Sequence: Обработка запроса пользователя (Online Pipeline)
+
+actor User as user
+participant "Streamlit\nFrontend" as frontend
+participant "RAGEngine" as rag
+participant "GigaChat API" as gigachat
+database "FAISS Index" as faiss
+database "chunks.parquet" as chunks
+database "embeddings.parquet" as embeddings
+participant "ClaudeClient" as claude
+participant "Claude API" as claude_api
+
+== Инициализация (при первом запросе) ==
+
+user -> frontend: Открытие страницы
+activate frontend
+
+frontend -> frontend: @st.cache_resource\nload_rag_engine()
+activate rag
+
+rag -> chunks: load_chunks()
+chunks --> rag: DataFrame
+
+rag -> embeddings: load_embeddings()
+embeddings --> rag: DataFrame
+
+rag -> faiss: load_index()
+faiss --> rag: FAISS Index
+
+frontend -> frontend: @st.cache_resource\nload_llm_client()
+activate claude
+
+claude -> claude: Anthropic(api_key)
+
+== Обработка запроса ==
+
+user -> frontend: "Кто такой Воланд?"
+frontend -> frontend: st.session_state.messages.append()
+
+frontend -> frontend: st.spinner("Ищу ответ...")
+
+== Retrieval ==
+
+frontend -> rag: get_context_for_llm(query, top_k=3)
+
+rag -> rag: search(query, top_k)
+
+rag -> gigachat: embed_query(query)
+gigachat --> rag: query_embedding[1024]
+
+rag -> rag: faiss.normalize_L2(query_embedding)
+
+rag -> faiss: index.search(query_embedding, k=3)
+faiss --> rag: (similarities, indices)
+
+loop Для каждого найденного индекса
+    rag -> embeddings: iloc[idx]['chunk_id']
+    embeddings --> rag: chunk_id
+
+    rag -> chunks: chunks_df[chunk_id]
+    chunks --> rag: {chapter, text}
+end
+
+rag --> frontend: (context_string, sources_list)
+
+note right of rag
+    context = "[Глава X]\\ntext1\\n\\n[Глава Y]\\ntext2..."
+    sources = [{chunk_id, chapter, text, score}, ...]
+end note
+
+== Generation ==
+
+frontend -> claude: generate_answer(query, context, sources)
+
+claude -> claude: Формирование промпта
+
+note right of claude
+    "Ты - система для ответов..."
+    + context
+    + query
+    + requirements
+end note
+
+claude -> claude_api: messages.create(\n  model="claude-haiku-4-5",\n  messages=[{role: "user", content: prompt}]\n)
+claude_api --> claude: response.content[0].text
+
+claude --> frontend: answer_text
+
+== Отображение результата ==
+
+frontend -> frontend: st.markdown(answer)
+
+frontend -> frontend: st.expander("Источники")
+
+loop Для каждого источника
+    frontend -> frontend: st.markdown(chapter)\nst.text(text)
+end
+
+frontend -> frontend: st.session_state.messages.append(\n  {role, content, sources}\n)
+
+frontend --> user: Ответ + источники из книги
+
+deactivate claude
+deactivate rag
+deactivate frontend
+
+@enduml

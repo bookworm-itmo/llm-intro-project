@@ -1,0 +1,243 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[russian]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{fontspec}
+\defaultfontfeatures{Ligatures={TeX},Renderer=Basic}  %% свойства шрифтов по умолчанию
+\setmainfont[Ligatures={TeX,Historic}]{Times New Roman} %% задаёт основной шрифт документа
+\setsansfont{Comic Sans MS}                    %% задаёт шрифт без засечек
+\setmonofont{Courier New}
+
+\geometry{margin=2cm}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+
+\begin{document}
+
+\begin{center}
+\Large\textbf{Чекпоинт 2: Core (RAG Pipeline)}\\[0.3em]
+\large RAG Чат-бот по роману <<Мастер и Маргарита>>\\[1em]
+\normalsize\textbf{Команда bookworm}\\[0.3em]
+Горбунов Дмитрий Павлович\\
+Ковалева Дарина Евгеньевна\\
+Тельнов Федор Николаевич\\
+Мацаков Борис Вячеславович
+\end{center}
+
+\vspace{0.5em}
+\textbf{Репозиторий:} \url{https://github.com/bookworm-itmo/llm-intro-project}
+
+\section*{Архитектура пайплайна}
+
+Система построена по классической RAG-архитектуре и состоит из четырёх основных компонентов:
+
+\begin{itemize}
+    \item \textbf{Data Service} --- парсинг FB2, chunking текста, подготовка данных
+    \item \textbf{RAG Service} --- векторизация запросов, поиск релевантных фрагментов через FAISS
+    \item \textbf{LLM Service} --- генерация ответов через Claude API
+    \item \textbf{Frontend} --- веб-интерфейс на Streamlit
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../build/architecture.png}
+\caption{Архитектура RAG чат-бота}
+\end{figure}
+
+\section*{Взаимодействие компонентов}
+
+\subsection*{Offline-этап: подготовка данных}
+
+\begin{enumerate}
+    \item \textbf{BookProcessor} парсит FB2-файл и разбивает текст на главы
+    \item \textbf{RecursiveCharacterTextSplitter} создаёт чанки (800 символов, overlap 100)
+    \item \textbf{GigaChatEmbeddings} генерирует векторы размерности 1024
+    \item \textbf{FAISS IndexFlatIP} индексирует нормализованные эмбеддинги
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../build/sequence_data_preparation.png}
+\caption{Sequence-диаграмма: подготовка данных}
+\end{figure}
+
+\subsection*{Online-этап: обработка запроса}
+
+\begin{enumerate}
+    \item Пользователь вводит вопрос через Streamlit UI
+    \item \textbf{RAGEngine.search()} создаёт эмбеддинг запроса через GigaChat API
+    \item FAISS находит top-k ближайших чанков по косинусному сходству
+    \item \textbf{ClaudeClient.generate\_answer()} формирует промпт с контекстом
+    \item Claude Haiku 4.5 генерирует ответ на основе контекста
+    \item Ответ и источники отображаются пользователю
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../build/sequence_query_processing.png}
+\caption{Sequence-диаграмма: обработка запроса пользователя}
+\end{figure}
+
+\section*{Список зависимостей}
+
+\begin{tabular}{ll}
+\toprule
+\textbf{Компонент} & \textbf{Технология} \\
+\midrule
+Chunking & LangChain RecursiveCharacterTextSplitter \\
+Embeddings & GigaChat Embeddings (Сбер), 1024 dim \\
+Vector Store & FAISS IndexFlatIP \\
+LLM (генерация) & Claude Haiku 4.5 (Anthropic) \\
+LLM (eval) & GigaChat-2 \\
+Frontend & Streamlit \\
+Data Format & Parquet (chunks, embeddings) \\
+\bottomrule
+\end{tabular}
+
+\section*{Реализация основной логики}
+
+\subsection*{RAG Pipeline}
+
+\textbf{Векторизация:} Используется GigaChatEmbeddings с нормализацией L2 для косинусного сходства.
+
+\textbf{База:} FAISS IndexFlatIP --- точный поиск ближайших соседей по inner product.
+
+\textbf{Retrieval:} Поиск top-k=5 релевантных чанков по запросу.
+
+\subsection*{End-to-end Pipeline}
+
+Запрос $\rightarrow$ Embedding $\rightarrow$ FAISS Search $\rightarrow$ Context Assembly $\rightarrow$ LLM Generation $\rightarrow$ Ответ
+
+Промпт для LLM включает:
+\begin{itemize}
+    \item Контекст из найденных чанков с указанием глав
+    \item Инструкцию отвечать только на основе контекста
+    \item Требование указывать источники и цитаты
+\end{itemize}
+
+\section*{Тестирование и метрики}
+
+\subsection*{Валидационная выборка}
+
+\begin{tabular}{ll}
+Всего запросов: & 70 \\
+Контекст на запрос: & 5 чанков \\
+Средний объём контекста: & $\sim$700 символов \\
+\end{tabular}
+
+\subsection*{Пайплайн тестирования}
+
+Для оценки качества использовалась библиотека \textbf{RAGAS} с адаптацией для русского языка:
+
+\begin{verbatim}
+from ragas import evaluate
+from ragas.metrics import faithfulness_ru, answer_relevancy_ru,
+    context_precision_ru, context_utilization_ru, context_recall_ru
+
+score = evaluate(
+    dataset=dataset,
+    metrics=[faithfulness_ru, answer_relevancy_ru,
+             context_precision_ru, context_utilization_ru,
+             context_recall_ru],
+    llm=GigaChat-2,
+    embeddings=GigaChatEmbeddings
+)
+\end{verbatim}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{../build/sequence_evaluation.png}
+\caption{Sequence-диаграмма: пайплайн оценки качества (RAGAS)}
+\end{figure}
+
+\subsection*{Описание метрик}
+
+\begin{itemize}
+    \item \textbf{faithfulness} --- насколько ответ опирается на контекст (меньше галлюцинаций)
+    \item \textbf{answer\_relevancy} --- насколько ответ соответствует вопросу
+    \item \textbf{context\_recall} --- нашёл ли retrieval нужную информацию
+    \item \textbf{context\_precision} --- <<чистота>> контекста (доля релевантного)
+    \item \textbf{context\_utilization} --- использовала ли модель контекст при ответе
+\end{itemize}
+
+\subsection*{Результаты (Baseline)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccccc}
+\toprule
+& faithfulness & answer\_rel. & ctx\_precision & ctx\_util. & ctx\_recall \\
+\midrule
+mean & 0.755 & 0.418 & 0.360 & 0.382 & 0.642 \\
+median & 0.764 & 0.000 & 0.287 & 0.287 & 1.000 \\
+std & 0.223 & 0.460 & 0.380 & 0.411 & 0.465 \\
+min & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+max & 1.000 & 0.976 & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\caption{Сводные метрики качества RAG-системы}
+\end{table}
+
+\subsection*{Анализ ошибок}
+
+\begin{tabular}{ll}
+Отказы (<<недостаточно контекста>>): & 31 из 70 (44.3\%) \\
+Полный retrieval (context\_recall = 1.0): & 42 запроса \\
+Провал retrieval (context\_recall < 0.5): & 23 запроса \\
+Провал генерации при полном retrieval: & 19 запросов \\
+<<Ответ есть, но модель отказалась>>: & 15 запросов \\
+\end{tabular}
+
+\section*{Интерпретация результатов}
+
+\subsection*{Сильные стороны}
+
+\textbf{Faithfulness (0.755)} --- высокий показатель. Когда модель отвечает содержательно, она не <<улетает>> в галлюцинации и опирается на предоставленный контекст.
+
+\subsection*{Проблемы Retrieval}
+
+Средний context\_recall = 0.642 при медиане 1.0 указывает на бимодальное распределение: retrieval либо находит нужную информацию полностью, либо не находит вовсе. 23 запроса с context\_recall < 0.5 --- потенциальные точки улучшения chunking/embedding стратегии.
+
+\subsection*{Проблемы генерации}
+
+Критичный паттерн: 15 случаев, когда ответ присутствует в контексте (context\_recall=1), но модель отказывается отвечать. Это указывает на слишком консервативный промпт --- модель предпочитает отказ вместо извлечения информации.
+
+\subsection*{Направления улучшения (Checkpoint 3)}
+
+\begin{enumerate}
+    \item Оптимизация промпта: добавить инструкцию <<сначала найди цитату, потом ответь>>
+    \item Увеличение top-k или уменьшение chunk\_size для лучшего покрытия
+    \item Гибридный поиск (BM25 + dense retrieval)
+    \item Reranking найденных чанков
+\end{enumerate}
+
+\section*{Структура репозитория}
+
+\begin{verbatim}
+.
+├── data/                       # Данные и индексы
+│   ├── master_and_margarita.fb2
+│   ├── chunks.parquet
+│   ├── embeddings.parquet
+│   └── faiss_index/index.faiss
+├── services/
+│   ├── data_service/           # BookProcessor, DataPreparator
+│   ├── rag_service/            # RAGEngine (FAISS + GigaChat)
+│   └── llm_service/            # ClaudeClient
+├── frontend/                   # Streamlit UI
+├── metrics/                    # Скрипты и отчёты по метрикам
+│   ├── eval.py
+│   ├── answers.csv
+│   └── report.md
+├── validation/                 # Валидационные данные
+└── docs/                       # Документация и диаграммы
+\end{verbatim}
+
+\end{document}

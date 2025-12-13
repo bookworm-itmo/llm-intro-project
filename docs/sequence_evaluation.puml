@@ -1,0 +1,114 @@
+@startuml sequence_evaluation
+!theme plain
+
+title Sequence: Оценка качества RAG-системы (Evaluation Pipeline)
+
+actor Developer as dev
+participant "eval.py" as eval
+database "answers.csv" as answers
+participant "RAGAS" as ragas
+participant "GigaChat LLM" as gigachat_llm
+participant "GigaChat\nEmbeddings" as gigachat_emb
+database "eval_metrics.csv" as metrics
+
+dev -> eval: python eval.py
+activate eval
+
+== Загрузка данных ==
+
+eval -> answers: pd.read_csv()
+answers --> eval: DataFrame
+
+note right of eval
+    70 записей:
+    - query
+    - answer
+    - context (5 чанков)
+    - gold_answers
+end note
+
+eval -> eval: Парсинг context\njson.loads()
+
+eval -> eval: Dataset.from_dict()
+
+== Инициализация моделей ==
+
+eval -> gigachat_llm: GigaChat(\n  model='GigaChat-2',\n  temperature=0.0\n)
+activate gigachat_llm
+
+eval -> gigachat_emb: GigaChatEmbeddings()
+activate gigachat_emb
+
+== Оценка метрик ==
+
+eval -> ragas: evaluate(\n  dataset,\n  metrics=[...],\n  llm, embeddings\n)
+activate ragas
+
+note right of ragas
+    Метрики:
+    - faithfulness_ru
+    - answer_relevancy_ru
+    - context_precision_ru
+    - context_utilization_ru
+    - context_recall_ru
+end note
+
+loop Для каждого sample (70 итераций)
+
+    == Faithfulness ==
+    ragas -> gigachat_llm: Проверка: ответ основан на контексте?
+    gigachat_llm --> ragas: score [0..1]
+
+    == Answer Relevancy ==
+    ragas -> gigachat_emb: embed(answer)
+    gigachat_emb --> ragas: answer_embedding
+
+    ragas -> gigachat_llm: Генерация вопросов из ответа
+    gigachat_llm --> ragas: generated_questions
+
+    ragas -> gigachat_emb: embed(generated_questions)
+    gigachat_emb --> ragas: question_embeddings
+
+    ragas -> ragas: cosine_similarity(\n  original_question,\n  generated_questions\n)
+
+    == Context Recall ==
+    ragas -> gigachat_llm: ground_truth присутствует в context?
+    gigachat_llm --> ragas: recall_score
+
+    == Context Precision ==
+    ragas -> gigachat_llm: Какая часть context релевантна question?
+    gigachat_llm --> ragas: precision_score
+
+    == Context Utilization ==
+    ragas -> gigachat_llm: Использовал ли answer информацию из context?
+    gigachat_llm --> ragas: utilization_score
+
+end
+
+ragas --> eval: EvaluationResult
+
+deactivate ragas
+deactivate gigachat_llm
+deactivate gigachat_emb
+
+== Сохранение результатов ==
+
+eval -> eval: score.to_pandas()
+
+eval -> metrics: to_csv('eval_metrics.csv')
+metrics --> eval: OK
+
+eval --> dev: DataFrame с метриками
+
+note right of dev
+    Сводка:
+    faithfulness: 0.755 (mean)
+    answer_relevancy: 0.418
+    context_recall: 0.642
+    context_precision: 0.360
+    context_utilization: 0.382
+end note
+
+deactivate eval
+
+@enduml
