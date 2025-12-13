@@ -35,14 +35,16 @@ def main():
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    for message in st.session_state.messages:
+    for msg_idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if "sources" in message:
-                with st.expander("Источники"):
-                    for src in message["sources"]:
-                        st.markdown(f"**Глава {src['chapter']}**")
-                        st.text(src['text'][:200] + "...")
+                with st.expander("📖 Источники из книги"):
+                    for i, src in enumerate(message["sources"], 1):
+                        st.markdown(f"**{i}. Глава {src['chapter']}**")
+                        st.text(src['text'])
+                        if i < len(message["sources"]):
+                            st.divider()
 
     if query := st.chat_input("Задайте вопрос о книге"):
         st.session_state.messages.append({"role": "user", "content": query})
@@ -62,9 +64,10 @@ def main():
 
                 with st.expander("📖 Источники из книги"):
                     for i, src in enumerate(sources, 1):
-                        st.markdown(f"### {i}. Глава {src['chapter']}")
-                        st.text(src['text'][:300] + "...")
-                        st.markdown("---")
+                        st.markdown(f"**{i}. Глава {src['chapter']}**")
+                        st.text(src['text'])
+                        if i < len(sources):
+                            st.divider()
 
                 st.session_state.messages.append({
                     "role": "assistant",
