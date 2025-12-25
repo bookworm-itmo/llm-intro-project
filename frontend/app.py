@@ -9,8 +9,14 @@ from services.llm_service.claude_client import ClaudeClient
 
 
 @st.cache_resource
-def load_rag_engine():
-    rag = RAGEngine()
+def load_rag_engine(use_reranker: bool = True):
+    """
+    Загружает RAG движок с реранкером по умолчанию для лучшего качества.
+    
+    Args:
+        use_reranker: Использовать ли реранкер (по умолчанию True - включен)
+    """
+    rag = RAGEngine(use_reranker=use_reranker)
     rag.load_chunks("data/chunks.parquet")
     rag.load_embeddings("data/embeddings.parquet")
     rag.load_index("data/faiss_index/index.faiss")
@@ -31,6 +37,13 @@ def main():
 
     st.title("📚 Чат-бот по роману 'Мастер и Маргарита'")
     st.markdown("Задавайте вопросы о сюжете, персонажах и событиях романа")
+
+    # Настройка: использовать ли реранкер (включен по умолчанию для лучшего качества)
+    use_reranker = st.sidebar.checkbox(
+        "Использовать реранкер (лучше качество)", 
+        value=True,
+        help="Реранкер улучшает точность поиска на ~22% (F1: 0.404 → 0.491). Время ответа: ~2-3 сек"
+    )
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -54,7 +67,7 @@ def main():
 
         with st.chat_message("assistant"):
             with st.spinner("Ищу ответ в книге..."):
-                rag = load_rag_engine()
+                rag = load_rag_engine(use_reranker=use_reranker)
                 llm = load_llm_client()
 
                 context, sources = rag.get_context_for_llm(query, top_k=3)

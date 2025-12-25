@@ -7,4 +7,9 @@ pyarrow
 python-dotenv==1.0.1
 langchain-gigachat
 langchain-text-splitters
+langchain-community
 tqdm
+sentence-transformers>=2.2.0
+torch>=1.9.0
+ragas
+datasets
