@@ -15,6 +15,8 @@ System_Boundary(rag_system, "RAG Система") {
 
     Container(rag_service, "RAG Service", "Python, FAISS, LangChain", "Поиск релевантных фрагментов\nRAGEngine")
 
+    Container(reranker, "BGE Reranker", "HuggingFace, PyTorch", "Переранжирование результатов\nBAI/bge-reranker-base")
+
     Container(data_service, "Data Service", "Python, LangChain", "Парсинг FB2, chunking\nBookProcessor, DataPreparator")
 
     ContainerDb(faiss_index, "FAISS Index", "IndexFlatIP", "Векторный индекс\n1182 векторов, 1024 dim")
@@ -42,6 +44,7 @@ Rel(rag_service, faiss_index, "search(query_vector, k)", "FAISS")
 Rel(rag_service, chunks_db, "Получение текста по chunk_id", "Pandas")
 Rel(rag_service, embeddings_db, "Загрузка векторов", "Pandas")
 Rel(rag_service, gigachat_api, "embed_query(text)", "HTTPS")
+Rel(rag_service, reranker, "rerank(query, candidates)", "PyTorch")
 
 ' LLM Service
 Rel(llm_service, claude_api, "messages.create(prompt)", "HTTPS")

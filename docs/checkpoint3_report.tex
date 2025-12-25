@@ -1,0 +1,250 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T2A]{fontenc}
+\usepackage[russian]{babel}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{longtable}
+
+\geometry{margin=2cm}
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.5em}
+
+\begin{document}
+
+\begin{center}
+\Large\textbf{Чекпоинт 3: Деплой и интерфейс}\\[0.3em]
+\large RAG Чат-бот по роману <<Мастер и Маргарита>>\\[1em]
+\normalsize\textbf{Команда bookworm}\\[0.3em]
+Горбунов Дмитрий Павлович\\
+Ковалева Дарина Евгеньевна\\
+Тельнов Федор Николаевич\\
+Мацаков Борис Вячеславович
+\end{center}
+
+\vspace{0.5em}
+\textbf{Репозиторий:} \url{https://github.com/bookworm-itmo/llm-intro-project}
+
+\section*{1. Функционал интерфейса}
+
+Веб-интерфейс реализован на \textbf{Streamlit} и представляет собой чат-бота для ответов на вопросы по роману М.А. Булгакова <<Мастер и Маргарита>>.
+
+\subsection*{Основные возможности}
+
+\begin{tabular}{ll}
+\toprule
+\textbf{Функция} & \textbf{Описание} \\
+\midrule
+Чат-интерфейс & Классический формат диалога с историей сообщений \\
+RAG-поиск & Поиск релевантных фрагментов через FAISS + GigaChat Embeddings \\
+Генерация ответов & Claude Haiku 4.5 на основе найденного контекста \\
+Источники & Раскрывающийся блок с цитатами из книги под каждым ответом \\
+Реранкер & Переключатель в сайдбаре для BGE Reranker \\
+\bottomrule
+\end{tabular}
+
+\subsection*{Элементы интерфейса}
+
+\begin{enumerate}
+    \item \textbf{Заголовок} --- <<Чат-бот по роману `Мастер и Маргарита'>> с пояснением
+    \item \textbf{Сайдбар} --- чекбокс <<Использовать реранкер>> (включен по умолчанию)
+    \item \textbf{История чата} --- все предыдущие вопросы и ответы сессии
+    \item \textbf{Поле ввода} --- внизу экрана, placeholder <<Задайте вопрос о книге>>
+    \item \textbf{Спиннер} --- индикатор загрузки <<Ищу ответ в книге...>>
+    \item \textbf{Экспандер источников} --- <<Источники из книги>> с номером главы и текстом
+\end{enumerate}
+
+\subsection*{Обработка ошибок}
+
+\begin{itemize}
+    \item При отсутствии API-ключей --- ошибка при запуске
+    \item При сбое LLM/embedding API --- исключение отображается в интерфейсе
+    \item Rate limit --- обрабатывается с retry и задержками
+\end{itemize}
+
+\section*{2. Скриншот интерфейса}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{screenshots/main_screen.png}
+\caption{Интерфейс чат-бота: вопрос <<Что случилось с Берлиозом?>>, ответ с источниками, развернутый блок цитат из глав. Слева --- сайдбар с переключателем реранкера.}
+\end{figure}
+
+\section*{3. Инструкция по запуску}
+
+\subsection*{Требования}
+
+\begin{itemize}
+    \item Python 3.10+
+    \item API-ключи Claude (Anthropic) и GigaChat (Сбер)
+\end{itemize}
+
+\subsection*{Быстрый старт}
+
+\begin{verbatim}
+# Клонировать репозиторий
+git clone https://github.com/bookworm-itmo/llm-intro-project
+cd llm-intro-project
+
+# Установить зависимости
+pip install -r requirements.txt
+
+# Создать .env файл
+echo "CLAUDE_API_KEY=your_key" > .env
+echo "GIGACHAT_AUTH_KEY=your_key" >> .env
+
+# Подготовить данные (если нет готовых)
+python main.py
+
+# Запустить интерфейс
+streamlit run frontend/app.py
+\end{verbatim}
+
+\subsection*{Запуск через Docker}
+
+\begin{verbatim}
+docker-compose up frontend
+\end{verbatim}
+
+\subsection*{Структура .env}
+
+\begin{verbatim}
+CLAUDE_API_KEY=sk-ant-...
+GIGACHAT_AUTH_KEY=base64_encoded_key
+\end{verbatim}
+
+\section*{4. Финальные метрики качества системы}
+
+\subsection*{4.1 Метрики Retrieval (поиск релевантных фрагментов)}
+
+\textbf{Сравнение с реранкером и без:}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Метрика} & \textbf{Без реранкера} & \textbf{С реранкером} & \textbf{Изменение} \\
+\midrule
+Precision & 0.373 & 0.453 & +21.4\% \\
+Recall & 0.528 & 0.550 & +4.2\% \\
+\textbf{F1} & \textbf{0.404} & \textbf{0.491} & \textbf{+21.5\%} \\
+\bottomrule
+\end{tabular}
+\caption{Сравнение качества retrieval с реранкером и без}
+\end{table}
+
+\textit{Реранкер: BGE-reranker-base с гибридной стратегией (weight=0.7, multiplier=3.0x)}
+
+\subsection*{4.2 Метрики RAGAS (качество генерации)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccl}
+\toprule
+\textbf{Метрика} & \textbf{Среднее} & \textbf{Медиана} & \textbf{Описание} \\
+\midrule
+Faithfulness & 0.755 & 0.764 & Соответствие ответа контексту \\
+Answer Relevancy & 0.418 & 0.000 & Релевантность ответа вопросу \\
+Context Recall & 0.642 & 1.000 & Полнота найденного контекста \\
+Context Precision & 0.360 & 0.287 & Точность контекста \\
+Context Utilization & 0.382 & 0.287 & Использование контекста моделью \\
+\bottomrule
+\end{tabular}
+\caption{Метрики RAGAS на валидационной выборке (70 запросов)}
+\end{table}
+
+\subsection*{4.3 Анализ результатов}
+
+\textbf{Сильные стороны:}
+\begin{itemize}
+    \item Высокий Faithfulness (0.755) --- модель редко галлюцинирует
+    \item Context Recall медиана 1.0 --- в большинстве случаев retrieval находит информацию
+    \item Реранкер улучшает F1 на 22\%
+\end{itemize}
+
+\textbf{Слабые стороны:}
+\begin{itemize}
+    \item Answer Relevancy медиана 0.0 --- модель часто отказывается отвечать
+    \item 44.3\% отказов (<<недостаточно информации в контексте>>)
+    \item 15 случаев отказа при полном context\_recall=1.0
+\end{itemize}
+
+\section*{5. Проведенные эксперименты}
+
+\subsection*{5.1 Оптимизация реранкера}
+
+Протестировано \textbf{105 комбинаций} гиперпараметров:
+\begin{itemize}
+    \item Вес реранкера: 0.5--0.85
+    \item Множитель кандидатов: 2.5x--4.5x
+    \item Стратегии комбинирования: linear, rrf, geometric
+\end{itemize}
+
+\textbf{Лучшая конфигурация:}
+\begin{verbatim}
+reranker_weight = 0.7
+candidate_multiplier = 3.0
+score_combination = "linear"
+\end{verbatim}
+
+\subsection*{5.2 Что работало}
+
+\begin{itemize}
+    \item \textbf{Реранкер} --- значительное улучшение precision (+21\%)
+    \item \textbf{Гибридная стратегия скоринга} --- лучше чем чистый semantic search
+    \item \textbf{GigaChat Embeddings} --- хорошо работают для русского текста
+    \item \textbf{Claude Haiku} --- быстрые и качественные ответы
+\end{itemize}
+
+\subsection*{5.3 Что не работало}
+
+\begin{itemize}
+    \item \textbf{Консервативный промпт} --- слишком много отказов
+    \item \textbf{OpenAI Embeddings} --- проблемы с VPN и доступом
+    \item \textbf{Большой top\_k без реранкера} --- много нерелевантного шума
+\end{itemize}
+
+\section*{6. Архитектура системы}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{architecture.png}
+\caption{C4-диаграмма архитектуры RAG чат-бота (PlantUML)}
+\end{figure}
+
+\section*{7. Структура репозитория}
+
+\begin{verbatim}
+llm-intro-project/
+├── data/                    # Данные (chunks, embeddings, index)
+├── services/
+│   ├── data_service/        # Парсинг FB2, chunking
+│   ├── rag_service/         # FAISS, embeddings, reranker
+│   └── llm_service/         # Claude API
+├── frontend/                # Streamlit UI
+├── validation/              # Скрипты оценки
+├── metrics/                 # Результаты экспериментов
+├── docs/                    # Документация
+├── requirements.txt         # Зависимости (точные версии)
+└── README.md               # Инструкция по запуску
+\end{verbatim}
+
+\section*{Заключение}
+
+Реализован полнофункциональный RAG чат-бот с веб-интерфейсом для ответов на вопросы по роману <<Мастер и Маргарита>>. Система использует:
+
+\begin{itemize}
+    \item \textbf{GigaChat Embeddings} для векторизации текста (1024 dim)
+    \item \textbf{FAISS IndexFlatIP} для быстрого поиска
+    \item \textbf{BGE Reranker} для улучшения качества (+22\% F1)
+    \item \textbf{Claude Haiku 4.5} для генерации ответов
+    \item \textbf{Streamlit} для веб-интерфейса
+\end{itemize}
+
+Система может быть развернута локально через pip или Docker. Реранкер включен по умолчанию для лучшего качества ответов.
+
+\end{document}

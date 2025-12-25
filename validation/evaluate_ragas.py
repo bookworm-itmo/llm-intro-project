@@ -1,374 +1,207 @@
+"""
+Оценка RAG системы с использованием RAGAS метрик.
+Сравнивает качество с реранкером и без.
+"""
 import json
-import sys
 import os
+import sys
+import time
+import warnings
 from pathlib import Path
-from typing import List, Dict, Optional
-from datasets import Dataset
+
 import numpy as np
+import pandas as pd
+from datasets import Dataset
+from dotenv import load_dotenv
+from tqdm import tqdm
 
+# Подключаем модули проекта
 sys.path.append(str(Path(__file__).parent.parent))
-
 from services.rag_service.rag_engine import RAGEngine
 from services.llm_service.claude_client import ClaudeClient
 
-# Проверка доступности RAGAS
-RAGAS_AVAILABLE = False
-METRICS_TO_EVALUATE = []
+load_dotenv()
 
-try:
-    # Пытаемся импортировать метрики из нового API (ragas >= 0.1.0)
-    try:
-        from ragas.metrics.collections import (
-            faithfulness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            context_utilization
-        )
-        METRICS_TO_EVALUATE = [
-            faithfulness,
-            answer_relevancy,
-            context_precision,
-            context_recall,
-            context_utilization
-        ]
-        RAGAS_AVAILABLE = True
-        print("✓ RAGAS метрики загружены из ragas.metrics.collections")
-    except ImportError:
-        # Fallback для старых версий
-        try:
-            from ragas.metrics import (
-                faithfulness,
-                answer_relevancy,
-                context_precision,
-                context_recall
-            )
-            METRICS_TO_EVALUATE = [
-                faithfulness,
-                answer_relevancy,
-                context_precision,
-                context_recall
-            ]
-            # Пытаемся импортировать context_utilization, если доступен
-            try:
-                from ragas.metrics import context_utilization
-                METRICS_TO_EVALUATE.append(context_utilization)
-            except ImportError:
-                print("⚠ context_utilization недоступен в этой версии RAGAS")
-            RAGAS_AVAILABLE = True
-            print("✓ RAGAS метрики загружены из ragas.metrics")
-        except ImportError as e:
-            print(f"⚠ Не удалось импортировать RAGAS метрики: {e}")
-            RAGAS_AVAILABLE = False
-except Exception as e:
-    print(f"⚠ Ошибка при импорте RAGAS: {e}")
-    RAGAS_AVAILABLE = False
+# Убираем deprecation warnings от RAGAS
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Настройка LLM и embeddings для RAGAS
-try:
-    from langchain_gigachat.llms import GigaChat
-    from langchain_gigachat.embeddings import GigaChatEmbeddings
-    from dotenv import load_dotenv
-    
-    load_dotenv()
-    
-    # Инициализация для RAGAS
-    ragas_llm = GigaChat(
-        credentials=os.getenv("GIGACHAT_AUTH_KEY"),
-        scope="GIGACHAT_API_PERS",
-        verify_ssl_certs=False,
-        model="GigaChat-Pro",
-        temperature=0.1
-    )
-    
-    ragas_embeddings = GigaChatEmbeddings(
-        credentials=os.getenv("GIGACHAT_AUTH_KEY"),
-        scope="GIGACHAT_API_PERS",
-        verify_ssl_certs=False
-    )
-    
-    RAGAS_CONFIGURED = True
-except Exception as e:
-    print(f"⚠ Не удалось настроить GigaChat для RAGAS: {e}")
-    RAGAS_CONFIGURED = False
+# Импорт RAGAS
+from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
+
+METRICS = [faithfulness, answer_relevancy, context_precision, context_recall]
+
+# LLM через OpenRouter, эмбеддинги через GigaChat
+from langchain_openai import ChatOpenAI
+from langchain_gigachat.embeddings import GigaChatEmbeddings
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+RAGAS_LLM = ChatOpenAI(
+    model="openai/gpt-4o-mini",
+    openai_api_key=OPENROUTER_API_KEY,
+    openai_api_base="https://openrouter.ai/api/v1",
+    temperature=0.0,
+    max_tokens=1024,
+)
+
+RAGAS_EMBEDDINGS = GigaChatEmbeddings(
+    credentials=os.getenv("GIGACHAT_AUTH_KEY"),
+    scope="GIGACHAT_API_PERS",
+    verify_ssl_certs=False
+)
+
+print("✓ RAGAS настроен (OpenRouter: GPT-4o-mini + GigaChat Embeddings)")
 
 
-def prepare_dataset_for_ragas(
-    rag: RAGEngine,
-    llm_client: ClaudeClient,
-    validation_data: List[Dict],
-    top_k: int = 5
-) -> Dataset:
-    """Подготовка датасета для оценки RAGAS."""
-    print(f"\nПодготовка датасета для RAGAS ({len(validation_data)} запросов)...")
-    
-    dataset_rows = []
-    
-    for i, item in enumerate(validation_data, 1):
+def load_rag_engine(use_reranker: bool) -> RAGEngine:
+    """Загружает RAG движок."""
+    rag = RAGEngine(use_reranker=use_reranker)
+    rag.load_chunks("data/chunks.parquet")
+    rag.load_embeddings("data/embeddings.parquet")
+    rag.load_index("data/faiss_index/index.faiss")
+    return rag
+
+
+def generate_answers(rag: RAGEngine, llm: ClaudeClient, questions: list, top_k: int = 5) -> Dataset:
+    """Генерирует ответы через RAG и формирует датасет для RAGAS."""
+    rows = []
+
+    for item in tqdm(questions, desc="Генерация ответов"):
         question = item["question"]
-        expected_chapters = item.get("expected_chapters", [])
-        
-        print(f"[{i}/{len(validation_data)}] Обработка: {question[:50]}...", end=" ")
-        
-        # Получаем контекст через RAG
-        retrieved = rag.search(question, top_k=top_k)
-        
+        gold_answer = item.get("gold_answer", "")
+
+        # RAG поиск с retry при rate limit
+        retrieved = None
+        for attempt in range(5):
+            try:
+                retrieved = rag.search(question, top_k=top_k)
+                break
+            except Exception as e:
+                if "429" in str(e) or "Too Many" in str(e):
+                    wait_time = 10 * (attempt + 1)  # 10, 20, 30, 40, 50 сек
+                    tqdm.write(f"⚠ Rate limit, жду {wait_time} сек (попытка {attempt+1}/5)...")
+                    time.sleep(wait_time)
+                else:
+                    tqdm.write(f"⚠ Ошибка: {e}")
+                    break
+
         if not retrieved:
-            print("⚠ Нет результатов поиска")
             continue
-        
-        # Формируем контекст из найденных чанков
-        contexts = [r["chunk"] for r in retrieved]
+
+        contexts = [r["text"] for r in retrieved]
         context_text = "\n\n".join(contexts)
-        
-        # Генерируем ответ через LLM
+
+        # Генерация ответа
         try:
-            answer = llm_client.generate_answer(
-                query=question,
-                context=context_text,
-                sources=retrieved
-            )
+            answer = llm.generate_answer(query=question, context=context_text, sources=retrieved)
         except Exception as e:
-            print(f"⚠ Ошибка генерации ответа: {e}")
+            tqdm.write(f"⚠ {e}")
             continue
-        
-        # Формируем ground_truth (ожидаемые главы как строка)
-        ground_truth = ", ".join(str(ch) for ch in sorted(expected_chapters)) if expected_chapters else ""
-        
-        dataset_rows.append({
-            "question": question,
-            "answer": answer,
-            "contexts": contexts,
-            "ground_truth": ground_truth
+
+        rows.append({
+            "user_input": question,
+            "response": answer,
+            "retrieved_contexts": contexts,
+            "reference": gold_answer
         })
-        
-        print("✓")
-    
-    if not dataset_rows:
-        raise ValueError("Не удалось подготовить данные для RAGAS")
-    
-    print(f"✓ Подготовлено {len(dataset_rows)} записей")
-    
-    return Dataset.from_list(dataset_rows)
+
+        # Задержка чтобы не упереться в rate limit GigaChat
+        time.sleep(1.5)
+
+    print(f"✓ Сгенерировано {len(rows)}/{len(questions)} ответов")
+    return Dataset.from_list(rows)
 
 
-def evaluate_with_ragas(
-    rag: RAGEngine,
-    llm_client: ClaudeClient,
-    validation_data: List[Dict],
-    use_reranker: bool = False
-) -> Dict:
-    """Оценка RAG системы с использованием RAGAS метрик."""
-    if not RAGAS_AVAILABLE:
-        raise RuntimeError("RAGAS не установлен или не может быть импортирован")
-    
-    if not RAGAS_CONFIGURED:
-        raise RuntimeError("GigaChat не настроен для RAGAS")
-    
-    mode_name = "с реранкером" if use_reranker else "без реранкера"
-    print(f"\n{'='*60}")
-    print(f"ОЦЕНКА RAGAS {mode_name.upper()}")
-    print(f"{'='*60}")
-    
-    # Подготавливаем датасет
-    dataset = prepare_dataset_for_ragas(rag, llm_client, validation_data)
-    
-    # Вычисляем метрики
-    print(f"\nВычисление метрик RAGAS...")
-    print(f"Используемые метрики: {[m.name for m in METRICS_TO_EVALUATE if m is not None]}")
-    
-    results = {}
-    
-    for metric in METRICS_TO_EVALUATE:
-        if metric is None:
-            continue
-        
-        try:
-            print(f"  Вычисление {metric.name}...", end=" ")
-            
-            # Настраиваем метрику с LLM и embeddings
-            metric.llm = ragas_llm
-            metric.embeddings = ragas_embeddings
-            
-            # Вычисляем метрику
-            scores = metric.score(dataset)
-            results[metric.name] = scores
-            
-            print(f"✓ (среднее: {np.mean(scores):.3f})")
-        except Exception as e:
-            print(f"⚠ Ошибка: {e}")
-            results[metric.name] = []
-    
-    # Вычисляем статистику
-    stats = {
-        'mean': {},
-        'median': {},
-        'std': {},
-        'min': {},
-        'max': {}
+def compute_metrics(dataset: Dataset) -> dict:
+    """Вычисляет RAGAS метрики."""
+    from ragas import evaluate
+
+    try:
+        result = evaluate(
+            dataset=dataset,
+            metrics=METRICS,
+            llm=RAGAS_LLM,
+            embeddings=RAGAS_EMBEDDINGS,
+        )
+        df = result.to_pandas()
+
+        results = {}
+        for metric in METRICS:
+            name = metric.name
+            if name in df.columns:
+                scores = df[name].dropna().tolist()
+                results[name] = {
+                    "mean": float(np.mean(scores)) if scores else 0,
+                    "median": float(np.median(scores)) if scores else 0,
+                    "std": float(np.std(scores)) if scores else 0,
+                    "min": float(np.min(scores)) if scores else 0,
+                    "max": float(np.max(scores)) if scores else 0,
+                    "scores": scores
+                }
+                print(f"  {name}: {results[name]['mean']:.3f}")
+            else:
+                print(f"  {name}: ⚠ не найден в результатах")
+                results[name] = {"mean": 0, "median": 0, "std": 0, "min": 0, "max": 0, "scores": []}
+
+        return results
+    except Exception as e:
+        print(f"⚠ Ошибка evaluate: {e}")
+        return {m.name: {"mean": 0, "median": 0, "std": 0, "min": 0, "max": 0, "scores": []} for m in METRICS}
+
+
+def run_evaluation(use_reranker: bool, questions: list, llm: ClaudeClient) -> dict:
+    """Полный цикл оценки."""
+    mode = "С реранкером" if use_reranker else "Без реранкера"
+    print(f"\n{'='*60}\n{mode.upper()}\n{'='*60}")
+
+    rag = load_rag_engine(use_reranker)
+    dataset = generate_answers(rag, llm, questions)
+
+    print("\nВычисление метрик:")
+    return compute_metrics(dataset)
+
+
+def print_comparison(results_no_rerank: dict, results_with_rerank: dict):
+    """Выводит сравнительную таблицу."""
+    print(f"\n{'='*60}\nСРАВНЕНИЕ\n{'='*60}")
+    print(f"{'Метрика':<20} {'Без реранкера':>15} {'С реранкером':>15} {'Δ':>10}")
+    print("-" * 60)
+
+    for name in results_no_rerank:
+        v1 = results_no_rerank[name]["mean"]
+        v2 = results_with_rerank[name]["mean"]
+        diff = v2 - v1
+        print(f"{name:<20} {v1:>15.3f} {v2:>15.3f} {diff:>+10.3f}")
+
+
+def save_results(results_no_rerank: dict, results_with_rerank: dict, output_path: str):
+    """Сохраняет результаты в JSON."""
+    output = {
+        "without_reranker": results_no_rerank,
+        "with_reranker": results_with_rerank
     }
-    
-    for metric_name, scores in results.items():
-        if scores and len(scores) > 0:
-            stats['mean'][metric_name] = float(np.mean(scores))
-            stats['median'][metric_name] = float(np.median(scores))
-            stats['std'][metric_name] = float(np.std(scores))
-            stats['min'][metric_name] = float(np.min(scores))
-            stats['max'][metric_name] = float(np.max(scores))
-        else:
-            stats['mean'][metric_name] = 0.0
-            stats['median'][metric_name] = 0.0
-            stats['std'][metric_name] = 0.0
-            stats['min'][metric_name] = 0.0
-            stats['max'][metric_name] = 0.0
-    
-    return {
-        'raw_scores': results,
-        **stats
-    }
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+    print(f"\n✓ Результаты сохранены: {output_path}")
 
 
 def main():
-    if not RAGAS_AVAILABLE:
-        print("\n" + "="*60)
-        print("ОШИБКА: RAGAS не установлен!")
-        print("Установите зависимости:")
-        print("  pip install ragas langchain-community datasets")
-        print("="*60)
-        return
-    
-    if not RAGAS_CONFIGURED:
-        print("\n" + "="*60)
-        print("ОШИБКА: GigaChat не настроен для RAGAS!")
-        print("Проверьте переменную окружения GIGACHAT_AUTH_KEY")
-        print("="*60)
-        return
-    
-    print("Загрузка валидационной выборки...")
-    with open("validation/validation_dataset.json", 'r', encoding='utf-8') as f:
-        validation_data = json.load(f)
-    print(f"Загружено {len(validation_data)} запросов")
-    
-    llm_client = ClaudeClient()  # Инициализируем ClaudeClient один раз
-    
-    # Оценка БЕЗ реранкера
-    print("\n" + "="*60)
-    print("ОЦЕНКА БЕЗ РЕРАНКЕРА")
-    print("="*60)
-    
-    rag_no_rerank = RAGEngine(use_reranker=False)
-    rag_no_rerank.load_chunks("data/chunks.parquet")
-    rag_no_rerank.load_embeddings("data/embeddings.parquet")
-    rag_no_rerank.load_index("data/faiss_index/index.faiss")
-    
-    results_no_rerank = evaluate_with_ragas(
-        rag_no_rerank, llm_client, validation_data, use_reranker=False
-    )
-    
-    # Оценка С реранкером
-    print("\n" + "="*60)
-    print("ОЦЕНКА С РЕРАНКЕРОМ")
-    print("="*60)
-    
-    rag_with_rerank = RAGEngine(use_reranker=True)
-    rag_with_rerank.load_chunks("data/chunks.parquet")
-    rag_with_rerank.load_embeddings("data/embeddings.parquet")
-    rag_with_rerank.load_index("data/faiss_index/index.faiss")
-    
-    results_with_rerank = evaluate_with_ragas(
-        rag_with_rerank, llm_client, validation_data, use_reranker=True
-    )
-    
-    # Выводим результаты
-    print("\n" + "="*60)
-    print("СРАВНЕНИЕ МЕТРИК RAGAS")
-    print("="*60)
-    
-    metrics_names = [m.name for m in METRICS_TO_EVALUATE if m is not None]
-    
-    print(f"\n{'Метрика':<25} {'Без реранкера':<20} {'С реранкером':<20} {'Изменение':<20}")
-    print("-" * 85)
-    
-    for metric in metrics_names:
-        no_rerank_val = results_no_rerank['mean'].get(metric, 0)
-        with_rerank_val = results_with_rerank['mean'].get(metric, 0)
-        diff = with_rerank_val - no_rerank_val
-        diff_pct = (diff / no_rerank_val * 100) if no_rerank_val > 0 else 0
-        diff_str = f"{diff:+.3f} ({diff_pct:+.1f}%)"
-        
-        print(f"{metric:<25} {no_rerank_val:<20.3f} {with_rerank_val:<20.3f} {diff_str:<20}")
-    
-    print("="*60)
-    
-    # Сохраняем результаты
-    output = {
-        'without_reranker': results_no_rerank,
-        'with_reranker': results_with_rerank,
-        'comparison': {
-            metric: {
-                'without': results_no_rerank['mean'].get(metric, 0),
-                'with': results_with_rerank['mean'].get(metric, 0),
-                'improvement': results_with_rerank['mean'].get(metric, 0) - results_no_rerank['mean'].get(metric, 0)
-            }
-            for metric in metrics_names
-        }
-    }
-    
-    output_path = "validation/ragas_results.json"
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(output, f, ensure_ascii=False, indent=2, default=str)
-    
-    print(f"\nРезультаты сохранены в {output_path}")
-    
-    # Выводим таблицы в формате LaTeX (как в чекпоинте)
-    print("\n" + "="*60)
-    print("ТАБЛИЦЫ ДЛЯ ОТЧЕТА (LaTeX формат)")
-    print("="*60)
-    
-    # Таблица без реранкера
-    print("\n\\begin{table}[H]")
-    print("\\centering")
-    print("\\begin{tabular}{l" + "c" * len(metrics_names) + "}")
-    print("\\toprule")
-    print("& " + " & ".join(metrics_names) + " \\\\")
-    print("\\midrule")
-    for stat in ['mean', 'median', 'std', 'min', 'max']:
-        print(f"{stat} & " + " & ".join([f"{results_no_rerank[stat].get(m, 0):.3f}" for m in metrics_names]) + " \\\\")
-    print("\\bottomrule")
-    print("\\end{tabular}")
-    print("\\caption{Сводные метрики качества RAG-системы (без реранкера)}")
-    print("\\end{table}\n")
-    
-    # Таблица с реранкером
-    print("\n\\begin{table}[H]")
-    print("\\centering")
-    print("\\begin{tabular}{l" + "c" * len(metrics_names) + "}")
-    print("\\toprule")
-    print("& " + " & ".join(metrics_names) + " \\\\")
-    print("\\midrule")
-    for stat in ['mean', 'median', 'std', 'min', 'max']:
-        print(f"{stat} & " + " & ".join([f"{results_with_rerank[stat].get(m, 0):.3f}" for m in metrics_names]) + " \\\\")
-    print("\\bottomrule")
-    print("\\end{tabular}")
-    print("\\caption{Сводные метрики качества RAG-системы (с реранкером)}")
-    print("\\end{table}\n")
-    
-    # Таблица сравнения
-    print("\n\\begin{table}[H]")
-    print("\\centering")
-    print("\\begin{tabular}{l" + "c" * len(metrics_names) + "}")
-    print("\\toprule")
-    print("& " + " & ".join(metrics_names) + " \\\\")
-    print("\\midrule")
-    print("Без реранкера & " + " & ".join([f"{results_no_rerank['mean'].get(m, 0):.3f}" for m in metrics_names]) + " \\\\")
-    print("С реранкером & " + " & ".join([f"{results_with_rerank['mean'].get(m, 0):.3f}" for m in metrics_names]) + " \\\\")
-    print("Изменение & " + " & ".join([f"{results_with_rerank['mean'].get(m, 0) - results_no_rerank['mean'].get(m, 0):+.3f}" for m in metrics_names]) + " \\\\")
-    print("\\bottomrule")
-    print("\\end{tabular}")
-    print("\\caption{Сравнение средних метрик RAGAS}")
-    print("\\end{table}\n")
+    # Загрузка датасета
+    dataset_path = Path(__file__).parent.parent / "metrics" / "dataset.csv"
+    df = pd.read_csv(dataset_path)
+    questions = [{"question": row["query"], "gold_answer": row["gold_answer"]} for _, row in df.iterrows()]
+    print(f"Загружено {len(questions)} вопросов")
+
+    llm = ClaudeClient()
+
+    # Оценка
+    results_no_rerank = run_evaluation(use_reranker=False, questions=questions, llm=llm)
+    results_with_rerank = run_evaluation(use_reranker=True, questions=questions, llm=llm)
+
+    # Результаты
+    print_comparison(results_no_rerank, results_with_rerank)
+    save_results(results_no_rerank, results_with_rerank, "validation/ragas_results.json")
 
 
 if __name__ == "__main__":
     main()
-

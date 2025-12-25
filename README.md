@@ -10,7 +10,7 @@
 
 ## Архитектура
 
-![Архитектура RAG Чат-бота](docs/solution_architecture.png)
+![Архитектура RAG Чат-бота](docs/architecture.png)
 
 ## Процесс сбора и подготовки данных
 
@@ -76,8 +76,13 @@ data/
 ## Быстрый старт
 
 ```bash
+# Установка зависимостей
 pip install -r requirements.txt
+
+# Подготовка данных (если нет готовых)
 python main.py
+
+# Запуск интерфейса
 streamlit run frontend/app.py
 ```
 
@@ -86,9 +91,20 @@ streamlit run frontend/app.py
 docker-compose up frontend
 ```
 
-Требуется `.env` с ключами:
-```
-CLAUDE_API_KEY=...
+### Настройка `.env`
+
+```bash
+# LLM провайдер: "openrouter" (по умолчанию) или "claude"
+LLM_PROVIDER=openrouter
+
+# OpenRouter (дешевле, по умолчанию)
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=openai/gpt-4o-mini
+
+# Claude API (альтернатива)
+CLAUDE_API_KEY=sk-ant-api03-...
+
+# GigaChat для эмбеддингов (обязательно)
 GIGACHAT_AUTH_KEY=...
 ```
 
@@ -96,13 +112,22 @@ GIGACHAT_AUTH_KEY=...
 
 ```
 .
-├── data/                       # Данные
+├── data/                       # Данные (chunks, embeddings, FAISS index)
 ├── services/
-│   ├── data_service/           # Парсинг, chunking и подготовка данных
-│   ├── rag_service/            # Эмбеддинги и FAISS
-│   └── llm_service/            # Claude API
+│   ├── data_service/           # Парсинг FB2, chunking
+│   ├── rag_service/            # FAISS + GigaChat Embeddings + BGE Reranker
+│   └── llm_service/            # OpenRouter / Claude API
 ├── frontend/                   # Streamlit UI
-├── validation/                 # Оценка качества RAG
-├── main.py                     # Главный скрипт подготовки данных
+├── validation/                 # Оценка качества (RAGAS)
+├── metrics/                    # Результаты экспериментов
+├── docs/                       # Документация и отчёты
+├── main.py                     # Скрипт подготовки данных
 └── requirements.txt
 ```
+
+## Возможности
+
+- **RAG-поиск** — FAISS IndexFlatIP + GigaChat Embeddings (1024 dim)
+- **Реранкер** — BGE-reranker-base для улучшения качества (+22% F1)
+- **LLM** — OpenRouter (GPT-4o-mini) или Claude Haiku
+- **Интерфейс** — Streamlit с историей чата и источниками

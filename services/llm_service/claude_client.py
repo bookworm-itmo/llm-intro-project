@@ -1,16 +1,41 @@
 import os
 from typing import List, Dict
-from anthropic import Anthropic
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
 class ClaudeClient:
-    def __init__(self, api_key: str = None):
+    """
+    LLM клиент с поддержкой Claude API и OpenRouter.
+
+    Провайдер выбирается через LLM_PROVIDER в .env:
+    - "claude" (по умолчанию) — прямой Claude API
+    - "openrouter" — через OpenRouter (дешевле, больше моделей)
+    """
+
+    def __init__(self, api_key: str = None, provider: str = None):
+        self.provider = provider or os.getenv("LLM_PROVIDER", "openrouter")
+
+        if self.provider == "openrouter":
+            self._init_openrouter()
+        else:
+            self._init_claude(api_key)
+
+    def _init_claude(self, api_key: str = None):
+        from anthropic import Anthropic
         self.api_key = api_key or os.getenv("CLAUDE_API_KEY")
         self.client = Anthropic(api_key=self.api_key)
         self.model = "claude-haiku-4-5-20251001"
+
+    def _init_openrouter(self):
+        from openai import OpenAI
+        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1"
+        )
+        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
     def generate_answer(
         self,
@@ -38,12 +63,23 @@ class ClaudeClient:
 4. Укажи главы источников: {chapters_str}
 5. Приведи краткую цитату из контекста"""
 
+        if self.provider == "openrouter":
+            return self._generate_openrouter(prompt, max_tokens)
+        else:
+            return self._generate_claude(prompt, max_tokens)
+
+    def _generate_claude(self, prompt: str, max_tokens: int) -> str:
         message = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+            messages=[{"role": "user", "content": prompt}]
         )
-
         return message.content[0].text
+
+    def _generate_openrouter(self, prompt: str, max_tokens: int) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
