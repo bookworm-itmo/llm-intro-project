@@ -131,3 +131,7 @@ GIGACHAT_AUTH_KEY=...
 - **Реранкер** — BGE-reranker-base для улучшения качества (+22% F1)
 - **LLM** — OpenRouter (GPT-4o-mini) или Claude Haiku
 - **Интерфейс** — Streamlit с историей чата и источниками
+
+## Интерфейс
+
+![Интерфейс чат-бота](docs/screenshots/main_screen.png)
