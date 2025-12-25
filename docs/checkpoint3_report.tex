@@ -41,7 +41,7 @@
 \midrule
 Чат-интерфейс & Классический формат диалога с историей сообщений \\
 RAG-поиск & Поиск релевантных фрагментов через FAISS + GigaChat Embeddings \\
-Генерация ответов & Claude Haiku 4.5 на основе найденного контекста \\
+Генерация ответов & OpenRouter (GPT-4o-mini по умолчанию) или Claude Haiku \\
 Источники & Раскрывающийся блок с цитатами из книги под каждым ответом \\
 Реранкер & Переключатель в сайдбаре для BGE Reranker \\
 \bottomrule
@@ -70,7 +70,7 @@ RAG-поиск & Поиск релевантных фрагментов чере
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.95\textwidth]{screenshots/main_screen.png}
+\includegraphics[width=0.95\textwidth]{main_screen.png}
 \caption{Интерфейс чат-бота: вопрос <<Что случилось с Берлиозом?>>, ответ с источниками, развернутый блок цитат из глав. Слева --- сайдбар с переключателем реранкера.}
 \end{figure}
 
@@ -80,7 +80,8 @@ RAG-поиск & Поиск релевантных фрагментов чере
 
 \begin{itemize}
     \item Python 3.10+
-    \item API-ключи Claude (Anthropic) и GigaChat (Сбер)
+    \item API-ключ OpenRouter (по умолчанию) или Claude (Anthropic)
+    \item API-ключ GigaChat (Сбер) для эмбеддингов
 \end{itemize}
 
 \subsection*{Быстрый старт}
@@ -93,9 +94,9 @@ cd llm-intro-project
 # Установить зависимости
 pip install -r requirements.txt
 
-# Создать .env файл
-echo "CLAUDE_API_KEY=your_key" > .env
-echo "GIGACHAT_AUTH_KEY=your_key" >> .env
+# Создать .env файл (см. .env.example)
+cp .env.example .env
+# Заполнить OPENROUTER_API_KEY и GIGACHAT_AUTH_KEY
 
 # Подготовить данные (если нет готовых)
 python main.py
@@ -113,99 +114,43 @@ docker-compose up frontend
 \subsection*{Структура .env}
 
 \begin{verbatim}
-CLAUDE_API_KEY=sk-ant-...
-GIGACHAT_AUTH_KEY=base64_encoded_key
+LLM_PROVIDER=openrouter          # или "claude"
+OPENROUTER_API_KEY=sk-or-v1-...  # для OpenRouter
+OPENROUTER_MODEL=openai/gpt-4o-mini
+CLAUDE_API_KEY=sk-ant-...        # для Claude
+GIGACHAT_AUTH_KEY=base64_key     # обязательно
 \end{verbatim}
 
 \section*{4. Финальные метрики качества системы}
 
-\subsection*{4.1 Метрики Retrieval (поиск релевантных фрагментов)}
-
-\textbf{Сравнение с реранкером и без:}
+\subsection*{Метрики RAGAS}
 
 \begin{table}[H]
 \centering
 \begin{tabular}{lccc}
 \toprule
-\textbf{Метрика} & \textbf{Без реранкера} & \textbf{С реранкером} & \textbf{Изменение} \\
+\textbf{Метрика} & \textbf{Без реранкера} & \textbf{С реранкером} & \textbf{Δ} \\
 \midrule
-Precision & 0.373 & 0.453 & +21.4\% \\
-Recall & 0.528 & 0.550 & +4.2\% \\
-\textbf{F1} & \textbf{0.404} & \textbf{0.491} & \textbf{+21.5\%} \\
+Faithfulness & 0.856 & 0.821 & -0.035 \\
+Answer Relevancy & 0.358 & 0.398 & +0.040 \\
+Context Precision & 0.487 & 0.474 & -0.013 \\
+Context Recall & 0.431 & 0.421 & -0.010 \\
 \bottomrule
 \end{tabular}
-\caption{Сравнение качества retrieval с реранкером и без}
+\caption{Метрики RAGAS на валидационной выборке (70 запросов, GPT-4o-mini)}
 \end{table}
-
-\textit{Реранкер: BGE-reranker-base с гибридной стратегией (weight=0.7, multiplier=3.0x)}
-
-\subsection*{4.2 Метрики RAGAS (качество генерации)}
-
-\begin{table}[H]
-\centering
-\begin{tabular}{lccl}
-\toprule
-\textbf{Метрика} & \textbf{Среднее} & \textbf{Медиана} & \textbf{Описание} \\
-\midrule
-Faithfulness & 0.755 & 0.764 & Соответствие ответа контексту \\
-Answer Relevancy & 0.418 & 0.000 & Релевантность ответа вопросу \\
-Context Recall & 0.642 & 1.000 & Полнота найденного контекста \\
-Context Precision & 0.360 & 0.287 & Точность контекста \\
-Context Utilization & 0.382 & 0.287 & Использование контекста моделью \\
-\bottomrule
-\end{tabular}
-\caption{Метрики RAGAS на валидационной выборке (70 запросов)}
-\end{table}
-
-\subsection*{4.3 Анализ результатов}
-
-\textbf{Сильные стороны:}
-\begin{itemize}
-    \item Высокий Faithfulness (0.755) --- модель редко галлюцинирует
-    \item Context Recall медиана 1.0 --- в большинстве случаев retrieval находит информацию
-    \item Реранкер улучшает F1 на 22\%
-\end{itemize}
-
-\textbf{Слабые стороны:}
-\begin{itemize}
-    \item Answer Relevancy медиана 0.0 --- модель часто отказывается отвечать
-    \item 44.3\% отказов (<<недостаточно информации в контексте>>)
-    \item 15 случаев отказа при полном context\_recall=1.0
-\end{itemize}
 
 \section*{5. Проведенные эксперименты}
 
-\subsection*{5.1 Оптимизация реранкера}
+\subsection*{Реранкер (BGE-reranker-base)}
 
-Протестировано \textbf{105 комбинаций} гиперпараметров:
-\begin{itemize}
-    \item Вес реранкера: 0.5--0.85
-    \item Множитель кандидатов: 2.5x--4.5x
-    \item Стратегии комбинирования: linear, rrf, geometric
-\end{itemize}
+Реранкер улучшил только answer\_relevancy (+0.040), остальные метрики немного просели. Вероятная причина: реранкер переупорядочивает контекст, но для данного датасета это не даёт преимущества — GigaChat эмбеддинги уже хорошо находят релевантные фрагменты.
 
-\textbf{Лучшая конфигурация:}
-\begin{verbatim}
-reranker_weight = 0.7
-candidate_multiplier = 3.0
-score_combination = "linear"
-\end{verbatim}
-
-\subsection*{5.2 Что работало}
+\subsection*{Что не работало}
 
 \begin{itemize}
-    \item \textbf{Реранкер} --- значительное улучшение precision (+21\%)
-    \item \textbf{Гибридная стратегия скоринга} --- лучше чем чистый semantic search
-    \item \textbf{GigaChat Embeddings} --- хорошо работают для русского текста
-    \item \textbf{Claude Haiku} --- быстрые и качественные ответы
-\end{itemize}
-
-\subsection*{5.3 Что не работало}
-
-\begin{itemize}
-    \item \textbf{Консервативный промпт} --- слишком много отказов
-    \item \textbf{OpenAI Embeddings} --- проблемы с VPN и доступом
-    \item \textbf{Большой top\_k без реранкера} --- много нерелевантного шума
+    \item \textbf{OpenAI Embeddings} --- проблемы с VPN
+    \item \textbf{GigaChat для LLM} --- rate limits (429)
 \end{itemize}
 
 \section*{6. Архитектура системы}
@@ -224,7 +169,7 @@ llm-intro-project/
 ├── services/
 │   ├── data_service/        # Парсинг FB2, chunking
 │   ├── rag_service/         # FAISS, embeddings, reranker
-│   └── llm_service/         # Claude API
+│   └── llm_service/         # OpenRouter / Claude API
 ├── frontend/                # Streamlit UI
 ├── validation/              # Скрипты оценки
 ├── metrics/                 # Результаты экспериментов
@@ -235,16 +180,16 @@ llm-intro-project/
 
 \section*{Заключение}
 
-Реализован полнофункциональный RAG чат-бот с веб-интерфейсом для ответов на вопросы по роману <<Мастер и Маргарита>>. Система использует:
+Реализован RAG чат-бот с веб-интерфейсом для ответов на вопросы по роману <<Мастер и Маргарита>>. Система использует:
 
 \begin{itemize}
     \item \textbf{GigaChat Embeddings} для векторизации текста (1024 dim)
-    \item \textbf{FAISS IndexFlatIP} для быстрого поиска
-    \item \textbf{BGE Reranker} для улучшения качества (+22\% F1)
-    \item \textbf{Claude Haiku 4.5} для генерации ответов
+    \item \textbf{FAISS IndexFlatIP} для поиска
+    \item \textbf{BGE Reranker} для переранжирования
+    \item \textbf{OpenRouter (GPT-4o-mini)} или Claude для генерации ответов
     \item \textbf{Streamlit} для веб-интерфейса
 \end{itemize}
 
-Система может быть развернута локально через pip или Docker. Реранкер включен по умолчанию для лучшего качества ответов.
+Система может быть развернута локально через pip или Docker.
 
 \end{document}

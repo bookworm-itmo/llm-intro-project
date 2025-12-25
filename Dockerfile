@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy only necessary code (not data!)
 COPY services/ ./services/
 COPY frontend/ ./frontend/
-COPY prepare_data.py .
+COPY main.py .
 
 ENV PYTHONPATH=/app
 

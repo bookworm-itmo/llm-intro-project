@@ -7,6 +7,9 @@ services:
       - ./data:/app/data
       - ./.env:/app/.env
     environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
       - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
     command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
@@ -18,6 +21,6 @@ services:
       - ./.env:/app/.env
     environment:
       - GIGACHAT_AUTH_KEY=${GIGACHAT_AUTH_KEY}
-    command: python prepare_data.py
+    command: python main.py
     profiles:
       - init

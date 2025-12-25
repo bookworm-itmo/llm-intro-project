@@ -128,9 +128,20 @@ GIGACHAT_AUTH_KEY=...
 ## Возможности
 
 - **RAG-поиск** — FAISS IndexFlatIP + GigaChat Embeddings (1024 dim)
-- **Реранкер** — BGE-reranker-base для улучшения качества (+22% F1)
+- **Реранкер** — BGE-reranker-base (опционально, в сайдбаре)
 - **LLM** — OpenRouter (GPT-4o-mini) или Claude Haiku
 - **Интерфейс** — Streamlit с историей чата и источниками
+
+## Метрики RAGAS
+
+| Метрика | Без реранкера | С реранкером |
+|---------|---------------|--------------|
+| Faithfulness | 0.856 | 0.821 |
+| Answer Relevancy | 0.358 | 0.398 |
+| Context Precision | 0.487 | 0.474 |
+| Context Recall | 0.431 | 0.421 |
+
+Реранкер улучшил только answer_relevancy (+0.040), остальные метрики немного просели.
 
 ## Интерфейс
 
